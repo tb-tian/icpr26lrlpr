@@ -16,13 +16,12 @@ Usage examples
 # Train on one subset (Brazilian plates only)
 python train_new.py \
     --dataroot dataset/train/Scenario-A/Brazilian \
-    --val_split 0.1 --epochs 300 --batch_size 8
+    --epochs 300 --batch_size 8
 
 # Train on everything under Scenario-A
 python train_new.py \
     --dataroot dataset/train/Scenario-A/Brazilian \
-               dataset/train/Scenario-A/Mercosur \
-    --val_split 0.1
+               dataset/train/Scenario-A/Mercosur
 
 # Resume from a checkpoint
 python train_new.py \
@@ -35,21 +34,20 @@ import argparse
 import logging
 import os
 import random
+import re
 import sys
 from glob import glob
 
-import numpy as np
 import torch
 import torch.nn as nn
 from PIL import Image
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
 # ─── make sure repo modules are importable ─────────────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import core.metrics as Metrics
-from model.LPDiff_modules import diffusion as diff_module, unet as unet_module
 from model.LPDiff_modules.diffusion import GaussianDiffusion
 from model.LPDiff_modules.unet import UNet
 from model.networks import init_weights
@@ -434,7 +432,8 @@ def train(args):
         # ── periodic checkpoint ──────────────────────────────────────────
         if (epoch + 1) % args.save_freq == 0:
             _save_checkpoint(net, optimizer, epoch + 1, global_step,
-                             args.checkpoint_dir, tag=f"epoch{epoch+1}")
+                             args.checkpoint_dir, tag=f"epoch{epoch+1}")    
+            _cleanup_old_checkpoints(args.checkpoint_dir, keep=2)            
             logger.info(f"  Checkpoint saved (epoch {epoch+1})")
 
     # ── final save ───────────────────────────────────────────────────────
@@ -458,6 +457,22 @@ def _save_checkpoint(net, optimizer, epoch, step, ckpt_dir, tag="latest"):
                 "optimizer": optimizer.state_dict()}, opt_path)
 
 
+def _cleanup_old_checkpoints(ckpt_dir, keep=2):
+    """Keep only the `keep` most recent epoch* checkpoints. best/final are never deleted."""
+    epoch_files = []
+    for f in os.listdir(ckpt_dir):
+        m = re.match(r"epoch(\d+)_gen\.pth$", f)
+        if m:
+            epoch_files.append((int(m.group(1)), f))
+    epoch_files.sort()  # oldest first
+    # Remove all but the last `keep`
+    for epoch_num, gen_name in epoch_files[:-keep]:
+        for suffix in ["_gen.pth", "_opt.pth"]:
+            path = os.path.join(ckpt_dir, f"epoch{epoch_num}{suffix}")
+            if os.path.exists(path):
+                os.remove(path)
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 #  ARGUMENT PARSER
 # ═══════════════════════════════════════════════════════════════════════════
@@ -472,9 +487,6 @@ def parse_args():
                    help="Resize height for all images (default: 32)")
     p.add_argument("--img_width", type=int, default=64,
                    help="Resize width for all images  (default: 64)")
-    p.add_argument("--val_split", type=float, default=0.1,
-                   help="Fraction of tracks used for validation (default: 0.1)")
-
     # ── training ─────────────────────────────────────────────────────────
     p.add_argument("--epochs", type=int, default=300)
     p.add_argument("--batch_size", type=int, default=8)
