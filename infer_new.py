@@ -138,21 +138,42 @@ def tensor_to_pil(tensor, target_size=None):
 def discover_tracks(roots):
     """
     Find all track directories that contain at least one lr-*.png.
+    First tries flat scan, then falls back to recursive scan.
     Returns list of dicts: {name, dir, lr_files}.
     """
     tracks = []
+    print(f"[discover] Roots to scan: {roots}")
+
     for root in roots:
-        if not os.path.isdir(root):
-            print(f"[!] Skipping non-existent root: {root}")
+        if not os.path.exists(root):
+            print(f"[Warn] Root directory {root} does not exist. Skipping.")
             continue
-        for name in sorted(os.listdir(root)):
-            d = os.path.join(root, name)
-            if not os.path.isdir(d):
-                continue
-            lr_files = sorted(glob(os.path.join(d, "lr-*.png")))
-            if not lr_files:
-                continue
-            tracks.append({"name": name, "dir": d, "lr": lr_files})
+
+        root_tracks = []
+        # Try flat scan first
+        if os.path.isdir(root):
+            for name in sorted(os.listdir(root)):
+                d = os.path.join(root, name)
+                if os.path.isdir(d):
+                    lr_files = sorted(glob(os.path.join(d, "lr-*.png")))
+                    if lr_files:
+                        root_tracks.append({"name": name, "dir": d, "lr": lr_files})
+        
+        # If flat scan failed, try recursive walk (fallback)
+        if not root_tracks:
+            for dirpath, dirnames, filenames in os.walk(root):
+                lr_files = sorted([os.path.join(dirpath, f) for f in filenames if f.startswith("lr-") and f.endswith(".png")])
+                if lr_files:
+                    name = os.path.basename(dirpath)
+                    root_tracks.append({"name": name, "dir": dirpath, "lr": lr_files})
+
+        count = len(root_tracks)
+        if count == 0:
+            print(f"  [Warn] No valid tracks found in {root}")
+        else:
+            print(f"  {root}: Found {count} tracks")
+            tracks.extend(root_tracks)
+            
     return tracks
 
 

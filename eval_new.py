@@ -105,15 +105,42 @@ def load_image(path, img_height, img_width, device):
 def discover_tracks(roots):
     """Find all track directories containing lr-*.png files."""
     tracks = []
+    print(f"[discover] Roots to scan: {roots}")
+
     for root in roots:
-        for name in sorted(os.listdir(root)):
-            d = os.path.join(root, name)
-            if os.path.isdir(d):
-                lr_files = sorted(glob(os.path.join(d, "lr-*.png")))
-                hr_files = sorted(glob(os.path.join(d, "hr-*.png")))
+        if not os.path.exists(root):
+            print(f"[Warn] Root directory {root} does not exist. Skipping.")
+            continue
+
+        root_tracks = []
+        # Try flat scan first
+        if os.path.isdir(root):
+            for name in sorted(os.listdir(root)):
+                d = os.path.join(root, name)
+                if os.path.isdir(d):
+                    lr_files = sorted(glob(os.path.join(d, "lr-*.png")))
+                    hr_files = sorted(glob(os.path.join(d, "hr-*.png")))
+                    if lr_files:
+                        root_tracks.append({"name": name, "dir": d,
+                                            "lr": lr_files, "hr": hr_files})
+        
+        # If flat scan failed, try recursive walk (fallback)
+        if not root_tracks:
+            for dirpath, dirnames, filenames in os.walk(root):
+                lr_files = sorted([os.path.join(dirpath, f) for f in filenames if f.startswith("lr-") and f.endswith(".png")])
+                hr_files = sorted([os.path.join(dirpath, f) for f in filenames if f.startswith("hr-") and f.endswith(".png")])
                 if lr_files:
-                    tracks.append({"name": name, "dir": d,
-                                   "lr": lr_files, "hr": hr_files})
+                    name = os.path.basename(dirpath)
+                    root_tracks.append({"name": name, "dir": dirpath, 
+                                        "lr": lr_files, "hr": hr_files})
+
+        count = len(root_tracks)
+        if count == 0:
+            print(f"  [Warn] No valid tracks found in {root}")
+        else:
+            print(f"  {root}: Found {count} tracks")
+            tracks.extend(root_tracks)
+            
     return tracks
 
 
@@ -210,8 +237,8 @@ def parse_args():
     p.add_argument("--output_dir", type=str, default="eval_results")
 
     # ── image size (must match training) ─────────────────────────────────
-    p.add_argument("--img_height", type=int, default=64)
-    p.add_argument("--img_width", type=int, default=128)
+    p.add_argument("--img_height", type=int, default=32)
+    p.add_argument("--img_width", type=int, default=64)
 
     # ── eval options ─────────────────────────────────────────────────────
     p.add_argument("--no_metrics", action="store_true",
@@ -229,10 +256,10 @@ def parse_args():
     p.add_argument("--unet_in_ch", type=int, default=6)
     p.add_argument("--unet_out_ch", type=int, default=3)
     p.add_argument("--inner_channel", type=int, default=64)
-    p.add_argument("--channel_mults", nargs="+", type=int, default=[1, 2, 4, 8, 8])
+    p.add_argument("--channel_mults", nargs="+", type=int, default=[1, 2, 4, 8])
     p.add_argument("--attn_res", nargs="+", type=int, default=[16])
     p.add_argument("--res_blocks", type=int, default=2)
-    p.add_argument("--image_size", type=int, default=64)
+    p.add_argument("--image_size", type=int, default=32)
 
     # ── GPU ──────────────────────────────────────────────────────────────
     p.add_argument("--gpu", type=str, default="0")
