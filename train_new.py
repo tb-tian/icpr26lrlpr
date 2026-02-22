@@ -132,27 +132,36 @@ class NewLPDataset(Dataset):
         track = self.tracks[idx]
         lr_files = track["lr"]
         hr_files = track["hr"]
+        n_frames = min(len(lr_files), len(hr_files))
 
-        # Sample 3 LR frames (with replacement when fewer than 3 available)
-        if len(lr_files) >= 3:
-            chosen_lr = random.sample(lr_files, 3)
+        # Pick a random anchor frame index — the HR will come from this frame
+        anchor = random.randint(0, n_frames - 1)
+        chosen_hr = hr_files[anchor]
+
+        # Pick 3 LR frames: always include the anchor, plus 2 others
+        lr_indices = list(range(len(lr_files)))
+        if len(lr_indices) >= 3:
+            others = [i for i in lr_indices if i != anchor]
+            chosen_idx = [anchor] + random.sample(others, min(2, len(others)))
+            # pad if fewer than 2 others
+            while len(chosen_idx) < 3:
+                chosen_idx.append(anchor)
         else:
-            chosen_lr = random.choices(lr_files, k=3)
+            chosen_idx = (lr_indices * 3)[:3]
+        random.shuffle(chosen_idx)  # shuffle so anchor isn't always first
 
-        # Sample 1 HR frame
-        chosen_hr = random.choice(hr_files)
-
-        lr1 = self._load(chosen_lr[0])
-        lr2 = self._load(chosen_lr[1])
-        lr3 = self._load(chosen_lr[2])
+        lr1 = self._load(lr_files[chosen_idx[0]])
+        lr2 = self._load(lr_files[chosen_idx[1]])
+        lr3 = self._load(lr_files[chosen_idx[2]])
         hr  = self._load(chosen_hr)
 
-        # Optional horizontal flip (same flip for all images in the tuple)
+        # NOTE: No horizontal flip — flipping destroys license plate text
+        # Augmentation: small brightness/contrast jitter on LR only
         if self.augment and random.random() > 0.5:
-            lr1 = torch.flip(lr1, dims=[-1])
-            lr2 = torch.flip(lr2, dims=[-1])
-            lr3 = torch.flip(lr3, dims=[-1])
-            hr  = torch.flip(hr,  dims=[-1])
+            jitter = random.uniform(-0.05, 0.05)
+            lr1 = (lr1 + jitter).clamp(-1, 1)
+            lr2 = (lr2 + jitter).clamp(-1, 1)
+            lr3 = (lr3 + jitter).clamp(-1, 1)
 
         return {"LR1": lr1, "LR2": lr2, "LR3": lr3, "HR": hr,
                 "path": chosen_hr}
@@ -425,18 +434,18 @@ def parse_args():
     # ── data ─────────────────────────────────────────────────────────────
     p.add_argument("--dataroot", nargs="+", required=True,
                    help="One or more root directories containing track_XXXXX folders")
-    p.add_argument("--img_height", type=int, default=64,
-                   help="Resize height for all images (default: 64)")
-    p.add_argument("--img_width", type=int, default=128,
-                   help="Resize width for all images  (default: 128)")
+    p.add_argument("--img_height", type=int, default=32,
+                   help="Resize height for all images (default: 32)")
+    p.add_argument("--img_width", type=int, default=64,
+                   help="Resize width for all images  (default: 64)")
     p.add_argument("--val_split", type=float, default=0.1,
                    help="Fraction of tracks used for validation (default: 0.1)")
 
     # ── training ─────────────────────────────────────────────────────────
     p.add_argument("--epochs", type=int, default=300)
     p.add_argument("--batch_size", type=int, default=8)
-    p.add_argument("--lr", type=float, default=5e-4,
-                   help="Initial learning rate (default: 5e-4)")
+    p.add_argument("--lr", type=float, default=1e-4,
+                   help="Initial learning rate (default: 1e-4)")
     p.add_argument("--num_workers", type=int, default=4)
     p.add_argument("--print_freq", type=int, default=50,
                    help="Log every N global steps")
@@ -458,12 +467,12 @@ def parse_args():
     p.add_argument("--unet_out_ch", type=int, default=3)
     p.add_argument("--inner_channel", type=int, default=64)
     p.add_argument("--channel_mults", nargs="+", type=int,
-                   default=[1, 2, 4, 8, 8])
+                   default=[1, 2, 4, 8])
     p.add_argument("--attn_res", nargs="+", type=int, default=[16])
     p.add_argument("--res_blocks", type=int, default=2)
     p.add_argument("--dropout", type=float, default=0.1)
-    p.add_argument("--image_size", type=int, default=64,
-                   help="Internal image_size reference for UNet attention layers")
+    p.add_argument("--image_size", type=int, default=32,
+                   help="Internal image_size reference for UNet attention layers (should match img_height)")
 
     # ── checkpoints / resume ─────────────────────────────────────────────
     p.add_argument("--resume_gen", type=str, default=None,
