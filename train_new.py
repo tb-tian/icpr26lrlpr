@@ -175,9 +175,9 @@ def discover_and_split(roots, val_count_per_root=5):
             if not os.path.isdir(d):
                 continue
             
-            # Verify it has LR/HR content
-            lr_files = sorted(glob(os.path.join(d, "lr-*.png")))
-            hr_files = sorted(glob(os.path.join(d, "hr-*.png")))
+            # Verify it has LR/HR content (support both .png and .jpg)
+            lr_files = sorted(glob(os.path.join(d, "lr-*.png")) + glob(os.path.join(d, "lr-*.jpg")))
+            hr_files = sorted(glob(os.path.join(d, "hr-*.png")) + glob(os.path.join(d, "hr-*.jpg")))
             if len(lr_files) > 0 and len(hr_files) > 0:
                 root_tracks.append({"lr": lr_files, "hr": hr_files, "name": name, "root": root})
 

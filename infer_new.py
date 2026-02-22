@@ -155,14 +155,14 @@ def discover_tracks(roots):
             for name in sorted(os.listdir(root)):
                 d = os.path.join(root, name)
                 if os.path.isdir(d):
-                    lr_files = sorted(glob(os.path.join(d, "lr-*.png")))
+                    lr_files = sorted(glob(os.path.join(d, "lr-*.png")) + glob(os.path.join(d, "lr-*.jpg")))
                     if lr_files:
                         root_tracks.append({"name": name, "dir": d, "lr": lr_files})
         
         # If flat scan failed, try recursive walk (fallback)
         if not root_tracks:
             for dirpath, dirnames, filenames in os.walk(root):
-                lr_files = sorted([os.path.join(dirpath, f) for f in filenames if f.startswith("lr-") and f.endswith(".png")])
+                lr_files = sorted([os.path.join(dirpath, f) for f in filenames if f.startswith("lr-") and (f.endswith(".png") or f.endswith(".jpg"))])
                 if lr_files:
                     name = os.path.basename(dirpath)
                     root_tracks.append({"name": name, "dir": dirpath, "lr": lr_files})
