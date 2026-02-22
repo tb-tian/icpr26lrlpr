@@ -8,7 +8,8 @@ New dataset layout (e.g. dataset/train/Scenario-A/Brazilian/track_XXXXX/):
 
 The diffusion model takes 3 LR images → MTA fusion → condition for the
 denoising U-Net, which learns to predict the residual between HR and the
-fused condition.  We randomly pick 3 LR frames and 1 HR frame per sample.
+fused condition.  We pick an anchor frame so the HR and LR are from the
+same timestamp, plus 2 neighbouring LR frames for temporal fusion.
 
 Usage examples
 --------------
@@ -31,14 +32,10 @@ python train_new.py \
 """
 
 import argparse
-import json
 import logging
-import math
 import os
 import random
-import re
 import sys
-from collections import OrderedDict
 from glob import glob
 
 import numpy as np
@@ -85,8 +82,8 @@ class NewLPDataset(Dataset):
     Each track folder contains lr-{NNN}.png and hr-{NNN}.png files.
     For every sample we:
       1. Pick the track at the given index.
-      2. Randomly choose 3 LR images (with replacement if < 3 exist).
-      3. Randomly choose 1 HR image as ground truth.
+      2. Pick a random anchor frame — the HR comes from this frame.
+      3. Choose 3 LR frames (anchor + 2 neighbours) for MTA fusion.
       4. Resize all images to a common (H, W) and normalise to [-1, 1].
     """
 
@@ -329,6 +326,10 @@ def train(args):
                 )
 
         avg_train_loss = epoch_loss / max(n_batches, 1)
+        logger.info(
+            f"Epoch {epoch:4d} done  |  avg_train_loss: {avg_train_loss:.4e}  "
+            f"lr: {scheduler.get_last_lr()[0]:.2e}"
+        )
         scheduler.step()
 
         # ── validation ───────────────────────────────────────────────────
