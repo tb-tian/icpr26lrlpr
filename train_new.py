@@ -87,25 +87,13 @@ class NewLPDataset(Dataset):
       4. Resize all images to a common (H, W) and normalise to [-1, 1].
     """
 
-    def __init__(self, roots: list[str], img_height: int, img_width: int,
+    def __init__(self, tracks: list[dict], img_height: int, img_width: int,
                  augment: bool = True):
         super().__init__()
         self.img_height = img_height
         self.img_width = img_width
         self.augment = augment
-
-        # Discover track folders across all roots
-        self.tracks: list[dict] = []
-        for root in roots:
-            for track_name in sorted(os.listdir(root)):
-                track_dir = os.path.join(root, track_name)
-                if not os.path.isdir(track_dir):
-                    continue
-                lr_files = sorted(glob(os.path.join(track_dir, "lr-*.png")))
-                hr_files = sorted(glob(os.path.join(track_dir, "hr-*.png")))
-                if len(lr_files) == 0 or len(hr_files) == 0:
-                    continue
-                self.tracks.append({"lr": lr_files, "hr": hr_files})
+        self.tracks = tracks
 
         # Shared transforms
         self.resize = transforms.Resize((img_height, img_width),
@@ -162,6 +150,52 @@ class NewLPDataset(Dataset):
 
         return {"LR1": lr1, "LR2": lr2, "LR3": lr3, "HR": hr,
                 "path": chosen_hr}
+
+
+def discover_and_split(roots, val_count_per_root=5):
+    """
+    Scans each root directory for tracks (sorted).
+    Takes the first `val_count_per_root` tracks for validation,
+    and the rest for training.
+    """
+    train_tracks = []
+    val_tracks = []
+
+    print(f"[discover] Roots to scan: {roots}")
+    
+    for root in roots:
+        if not os.path.exists(root):
+            print(f"[Warn] Root directory {root} does not exist. Skipping.")
+            continue
+            
+        # Find all valid track directories
+        root_tracks = []
+        for name in sorted(os.listdir(root)):
+            d = os.path.join(root, name)
+            if not os.path.isdir(d):
+                continue
+            
+            # Verify it has LR/HR content
+            lr_files = sorted(glob(os.path.join(d, "lr-*.png")))
+            hr_files = sorted(glob(os.path.join(d, "hr-*.png")))
+            if len(lr_files) > 0 and len(hr_files) > 0:
+                root_tracks.append({"lr": lr_files, "hr": hr_files, "name": name, "root": root})
+
+        count = len(root_tracks)
+        if count == 0:
+            print(f"  [Warn] No valid tracks found in {root}")
+            continue
+
+        # Split logic: first 5 -> val, rest -> train
+        n_val = min(count, val_count_per_root)
+        val_subset = root_tracks[:n_val]
+        train_subset = root_tracks[n_val:]
+        
+        val_tracks.extend(val_subset)
+        train_tracks.extend(train_subset)
+        print(f"  {root}: Found {count} tracks -> {len(train_subset)} train, {len(val_subset)} val")
+
+    return train_tracks, val_tracks
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -223,22 +257,24 @@ def train(args):
     logger = get_logger(args.log_dir)
 
     # ── dataset & loaders ────────────────────────────────────────────────
-    full_dataset = NewLPDataset(
-        roots=args.dataroot,
+    # New logic: discover tracks from all roots and apply per-root split (first 5 for val)
+    train_tracks, val_tracks = discover_and_split(args.dataroot, val_count_per_root=5)
+
+    train_set = NewLPDataset(
+        tracks=train_tracks,
         img_height=args.img_height,
         img_width=args.img_width,
         augment=True,
     )
-    total = len(full_dataset)
-    val_size = max(1, int(total * args.val_split))
-    train_size = total - val_size
-    train_set, val_set = random_split(
-        full_dataset, [train_size, val_size],
-        generator=torch.Generator().manual_seed(42),
+    val_set = NewLPDataset(
+        tracks=val_tracks,
+        img_height=args.img_height,
+        img_width=args.img_width,
+        augment=False,
     )
-    # Disable augmentation for validation subset (wrap approach)
-    val_set.dataset_augment_backup = full_dataset.augment  # keep reference
-    # (augment flag is shared; we toggle it in the val loop)
+
+    train_size = len(train_set)
+    val_size = len(val_set)
 
     train_loader = DataLoader(
         train_set,
@@ -256,7 +292,7 @@ def train(args):
         pin_memory=True,
     )
 
-    logger.info(f"Dataset: {total} tracks  (train={train_size}, val={val_size})")
+    logger.info(f"Dataset summary: {train_size} training samples, {val_size} validation samples")
     logger.info(f"Image size: {args.img_height}x{args.img_width}")
 
     # ── model ────────────────────────────────────────────────────────────
@@ -335,8 +371,7 @@ def train(args):
         # ── validation ───────────────────────────────────────────────────
         if (epoch + 1) % args.val_freq == 0:
             net.eval()
-            full_dataset.augment = False          # disable augment for val
-
+            
             val_psnr_sum = 0.0
             val_loss_sum = 0.0
             val_count = 0
@@ -369,8 +404,6 @@ def train(args):
                         lr1_img = Metrics.tensor2img(vdata["LR1"].cpu())
                         Metrics.save_img(lr1_img,
                                          os.path.join(result_path, "lr1.png"))
-
-            full_dataset.augment = True           # re-enable augment
 
             avg_val_loss = val_loss_sum / max(val_count, 1)
             avg_val_psnr = val_psnr_sum / max(val_count, 1)
